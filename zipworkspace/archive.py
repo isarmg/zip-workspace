@@ -56,7 +56,70 @@ def bounded_directory(f):
         if not name_len or volume or f.seek(name_len + extra_len + comment_len, os.SEEK_CUR) > pos:
             raise Rejected("invalid central directory lengths or volume")
     if f.tell() != pos: raise Rejected("extra central directory entries")
-    return count
+    return count, cd_offset
+
+
+LOCAL = struct.Struct("<4s5H3I2H")
+ZIP64_LIMIT = 0xffffffff
+
+
+def _zip64_extra(extra):
+    zi = None
+    i = 0
+    while i < len(extra):
+        if len(extra)-i < 4: raise Rejected("truncated ZIP extra field")
+        field, length = struct.unpack_from("<HH", extra, i)
+        i += 4
+        if i + length > len(extra): raise Rejected("invalid ZIP extra length")
+        if field == 1:
+            if zi is not None: raise Rejected("duplicate local ZIP64 extra field")
+            zi = extra[i:i+length]
+        if field == 0x9901: raise Rejected("encrypted ZIP metadata is not accepted")
+        i += length
+    return zi
+
+
+def _local_sizes(extra, uncompressed, compressed):
+    required = (uncompressed == ZIP64_LIMIT, compressed == ZIP64_LIMIT)
+    zi = _zip64_extra(extra)
+    values = [uncompressed,compressed]
+    pos = 0
+    for n, needed in enumerate(required):
+        if needed:
+            if zi is None or len(zi)-pos < 8: raise Rejected("missing local ZIP64 entry size")
+            values[n] = struct.unpack_from("<Q", zi, pos)[0]; pos += 8
+    return values, any(required)
+
+
+def _local_header(f, item, central_at):
+    # zipfile verifies the payload CRC and local filename when opening. Check
+    # the format declarations too: many ordinary tools consult the local header.
+    f.seek(item.header_offset)
+    raw = f.read(LOCAL.size)
+    if len(raw) != LOCAL.size: raise Rejected("missing local member header")
+    sig, version, flags, method, _, __, crc, compressed, size, nlen, xlen = LOCAL.unpack(raw)
+    if sig != b"PK\x03\x04" or flags != item.flag_bits or method != zipfile.ZIP_STORED:
+        raise Rejected("local and central Store/encryption declarations disagree")
+    end = item.header_offset + LOCAL.size + nlen + xlen + item.compress_size
+    if nlen > 4096 or end > central_at: raise Rejected("local member outside archive budget")
+    name = f.read(nlen)
+    if name.decode("utf-8" if flags & 0x800 else "cp437") != item.orig_filename:
+        raise Rejected("local and central member names disagree")
+    sizes, big = _local_sizes(f.read(xlen), size, compressed)
+    targets = (item.file_size,item.compress_size)
+    if not flags & 8:
+        if crc != item.CRC or tuple(sizes) != targets:
+            raise Rejected("local sizes or CRC disagree with central record")
+        return
+    if crc not in (0,item.CRC) or any(a not in (0,b) for a,b in zip(sizes,targets)):
+        raise Rejected("streamed local member disagrees with central record")
+    if item.file_size >= ZIP64_LIMIT or item.compress_size >= ZIP64_LIMIT: big = True
+    descriptor = struct.pack("<IQQ" if big else "<III", item.CRC, item.compress_size, item.file_size)
+    f.seek(end)
+    remaining = min(len(descriptor)+4, central_at-end)
+    after = f.read(remaining)
+    if not (after.startswith(descriptor) or after.startswith(b"PK\x07\x08"+descriptor)):
+        raise Rejected("streamed ZIP descriptor does not describe its actual member")
 
 
 def stamp(f):
@@ -71,7 +134,7 @@ def read_archive(path, *, managed=True, sink: Path | None = None, internal=False
         raise Rejected("use .zxs for a repository, or the separate .zip import command")
     with path.open("rb") as f:
         before = stamp(f)
-        expected_count = bounded_directory(f)
+        expected_count, central_at = bounded_directory(f)
         with zipfile.ZipFile(f, "r") as z:
             if len(z.filelist) != expected_count:
                 raise Rejected("central directory member count disagrees with its footer")
@@ -87,6 +150,8 @@ def read_archive(path, *, managed=True, sink: Path | None = None, internal=False
                 kind = stat.S_IFMT(item.external_attr >> 16) if item.create_system == 3 else 0
                 if kind not in (0, stat.S_IFDIR if d else stat.S_IFREG) or item.external_attr & 0x400:
                     raise Rejected("links, devices and reparse entries are not accepted")
+                _zip64_extra(item.extra)
+                _local_header(f, item, central_at)
                 name = item.filename[:-1] if d else item.filename
                 manifest.add(name, d, item.file_size, None)
                 items.append((item, name, d))

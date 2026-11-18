@@ -23,7 +23,17 @@ def sync_dir(directory: Path):
     finally: os.close(fd)
 
 
+def require_native_writer():
+    if os.name != "posix" or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY") or os.open not in os.supports_dir_fd:
+        raise Rejected("this platform has no admitted native workspace writer; no files or settings were changed")
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith("linux") and hasattr(libc,"renameat2"): return
+    if sys.platform == "darwin" and hasattr(libc,"renameatx_np"): return
+    raise Rejected("native no-replace rename unavailable; no files or settings were changed")
+
+
 def rename_new(source: Path, target: Path):
+    require_native_writer()
     if source.parent != target.parent:
         raise Rejected("atomic publication requires a same-directory temporary sibling")
     fd = os.open(source.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -43,6 +53,8 @@ def rename_new(source: Path, target: Path):
 
 
 def digest_file(path: Path):
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise Rejected("exact named archive readback is not available on this platform")
     h = hashlib.sha256()
     fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     with os.fdopen(fd, "rb") as f:

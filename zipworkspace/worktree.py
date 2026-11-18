@@ -10,7 +10,7 @@ from . import lifecycle
 from .archive import read_archive
 from .freeze import frozen_tree, pack
 from .model import Commit, Rejected, check_id, new_id
-from .publish import confirm_final, digest_file, publish, rename_new, sync_dir
+from .publish import confirm_final, digest_file, publish, rename_new, require_native_writer, sync_dir
 
 
 def paths(work, store, state):
@@ -24,6 +24,7 @@ def paths(work, store, state):
 
 
 def enroll(work, store, state, base=None):
+    require_native_writer()
     work, store, state = paths(work, store, state)
     if not work.is_dir() or work.is_symlink(): raise Rejected("select a regular local working directory")
     state.mkdir(mode=0o700, exist_ok=False)
@@ -69,6 +70,7 @@ def locked(state):
 
 
 def extract(archive, dest, managed=True, *, source_sha=None, selected=None):
+    require_native_writer()
     dest = Path(dest).absolute()
     if dest.exists() or dest.is_symlink(): raise Rejected("checkout needs a fresh destination")
     # On failure a private incomplete stage may survive; do not remove or
@@ -118,6 +120,7 @@ def finish(state, operation):
 
 
 def commit(state, *, fork=False):
+    require_native_writer()
     with locked(state) as (con, row, state):
         if row["pending"] is not None:
             raise Rejected("an original operation is pending; resume it rather than recapturing")
