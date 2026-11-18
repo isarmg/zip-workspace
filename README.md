@@ -1,6 +1,6 @@
 # ZIP Workspace
 
-把一棵目录签出到本机，用普通工具编辑，明确提交时才发布整个目录的新版本。主机或 SMB 共享只需保存普通文件：每个已提交目录快照都是一个 **未加密、Store 模式的标准 ZIP**，扩展名为 `.zxs`，大归档使用 ZIP64。把它改名为 `.zip`，普通解压工具即可取回文件和空目录。服务器不理解也不需要理解这些内容。
+把一棵目录签出到本机，用普通工具编辑，明确提交时才发布整个目录的新版本。主机或 SMB 共享只需保存普通文件：每个已提交目录快照都是一个 **未加密、Store 模式的标准 ZIP**，扩展名为 `.zxs`，大归档使用 ZIP64。要用普通解压工具取回文件和空目录，可将归档复制为 `.zip`；保留原来的 `.zxs`，之后仍可用命令行签出或查看历史。保存归档的主机或共享目录不需要安装 ZIP Workspace 服务端。
 
 本仓库是独立实现。目录仓库、分支、历史和本机工作树由客户端管理；归档内没有逐文件节点、文件容器、专用文件头或隐藏元数据目录。仓库标记位于 ZIP 规范已有的 archive comment。普通 ZIP 和仓库包有独立的打开入口，不能只靠后缀冒充仓库。
 
@@ -12,10 +12,13 @@
 mkdir -p demo/work/empty demo/store demo/states
 printf 'hello\n' > demo/work/hello.txt
 python3 -m zipworkspace init demo/work demo/store demo/states/first
-python3 -m zipworkspace commit demo/states/first --writers-stopped
+ARCHIVE=$(
+  python3 -m zipworkspace commit demo/states/first --writers-stopped |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["committed_archive"])'
+)
 ```
 
-最后一条命令输出已发布的 `committed_archive` 和提交身份。将以下示例中的 `ARCHIVE` 替换为这个文件名：
+在同一个终端继续。`$ARCHIVE` 是刚才那次提交返回的归档路径，不用猜文件名或寻找“最新”的包：
 
 ```sh
 python3 -m zipworkspace inspect "$ARCHIVE"
@@ -47,4 +50,8 @@ python3 -m zipworkspace commit demo/states/second --fork --writers-stopped
 python3 -m unittest discover -s tests -v
 ```
 
-当前是目录仓库核心与命令行，不是五平台挂载发行版。真实 SMB 服务、平台虚拟磁盘、移动客户端、签名和 Release 尚未验证。详见[行为迁移与平台范围](docs/design.md)。
+## 平台与发行状态
+
+- **已验证：** Linux 上的 Python 3.12 源码命令行。`checkout` 写入普通本机目录，不会创建挂载点。ZIP64 已用包含 65,536 个条目的归档验证，单个 4 GiB 文件不在这项验证范围内。
+- **尚未发行：** Linux、macOS、Windows 均无桌面图形界面或虚拟磁盘挂载发行版；iOS、Android 均无移动客户端。当前源码不是这些平台可直接安装的签名 Release。
+- **网络存储：** 真实 SMB 共享的不可覆盖发布和断线恢复尚待验证，不能将本机测试当作共享设备的保证。详见[归档校验和平台范围](docs/design.md)。

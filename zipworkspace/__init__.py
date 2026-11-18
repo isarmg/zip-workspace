@@ -1,1 +1,1 @@
-"""Standalone ZIP directory repository. No network, server or ZXS SDK dependency."""
+"""Standalone ZIP directory repository with no server dependency."""
