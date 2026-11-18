@@ -9,6 +9,7 @@ import zipfile
 from .archive import read_archive
 from .model import Rejected
 from . import worktree as w
+from . import lifecycle
 
 
 def main(args=None):
@@ -24,6 +25,12 @@ def main(args=None):
     add("import-zip", "archive worktree", "import an ordinary unencrypted Store .zip into a new directory")
     add("status", "state", "show this checkout's recorded base and pending original")
     add("history", "archive store", "follow exact directory-level commit ancestry")
+    add("changes", "state", "compare actual ordinary working files to their original directory snapshot")
+    for action in ("hide", "restore", "resume-visibility"):
+        vis = add(action, "state", "move or verify only this exact clean local worktree")
+        vis.add_argument("--writers-stopped", action="store_true", required=True)
+        if action == "resume-visibility": vis.add_argument("operation")
+    add("fork-pending", "state", "explicitly fork an exact candidate after a verified branch conflict").add_argument("operation")
     c = add("commit", "state", "freeze and publish all ordinary files as one .zxs archive")
     c.add_argument("--writers-stopped", action="store_true", required=True, help="confirm all external worktree writers have stopped")
     c.add_argument("--fork", action="store_true", help="explicitly start a new branch from the selected base")
@@ -40,6 +47,12 @@ def main(args=None):
         elif ns.action == "import-zip":
             _, tree = w.extract(ns.archive, ns.worktree, managed=False); result = {"imported_entries": len(tree.rows)}
         elif ns.action == "status": result = w.status(ns.state)
+        elif ns.action == "changes": result = lifecycle.changes(ns.state)
+        elif ns.action in ("hide", "restore"): result = lifecycle.start(ns.state, ns.action)
+        elif ns.action == "resume-visibility": result = lifecycle.finish(ns.state, ns.operation)
+        elif ns.action == "fork-pending":
+            target, marker = w.fork_pending(ns.state, ns.operation)
+            result = {"committed_archive":str(target), "commit":asdict(marker)}
         elif ns.action == "history":
             chain, missing = w.history(ns.archive, ns.store); result = {"commits": [asdict(x) for x in chain], "missing_parent": missing}
         else:
