@@ -9,7 +9,7 @@ import stat
 import sys
 import tempfile
 from .archive import read_archive, stamp
-from .model import CHUNK, Commit, Rejected
+from .model import CHUNK, MAX_TOTAL, MAX_CD, Commit, Rejected
 
 
 class Conflict(Rejected): pass
@@ -46,7 +46,9 @@ def digest_file(path: Path):
     h = hashlib.sha256()
     fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     with os.fdopen(fd, "rb") as f:
-        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode): raise Rejected("expected an ordinary file")
+        meta = os.fstat(f.fileno())
+        if not stat.S_ISREG(meta.st_mode) or meta.st_size > MAX_TOTAL + 2 * MAX_CD + (1 << 20):
+            raise Rejected("expected a bounded ordinary archive file")
         before = stamp(f)
         while data := f.read(CHUNK): h.update(data)
         if before != stamp(f): raise Rejected("archive changed during digest")

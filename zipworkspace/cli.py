@@ -9,7 +9,7 @@ import zipfile
 from .archive import read_archive
 from .model import Rejected
 from . import worktree as w
-from . import lifecycle
+from . import lifecycle, refs
 
 
 def main(args=None):
@@ -25,6 +25,9 @@ def main(args=None):
     add("import-zip", "archive worktree", "import an ordinary unencrypted Store .zip into a new directory")
     add("status", "state", "show this checkout's recorded base and pending original")
     add("history", "archive store", "follow exact directory-level commit ancestry")
+    add("branches", "archive store", "list complete observed directory heads and exact missing ancestors")
+    for command, field in (("checkout-branch","branch"), ("checkout-node","operation")):
+        add(command, "archive store worktree state", "check out an exact directory branch head or historical node").add_argument(field)
     add("changes", "state", "compare actual ordinary working files to their original directory snapshot")
     for action in ("hide", "restore", "resume-visibility"):
         vis = add(action, "state", "move or verify only this exact clean local worktree")
@@ -47,6 +50,12 @@ def main(args=None):
         elif ns.action == "import-zip":
             _, tree = w.extract(ns.archive, ns.worktree, managed=False); result = {"imported_entries": len(tree.rows)}
         elif ns.action == "status": result = w.status(ns.state)
+        elif ns.action == "branches":
+            result = refs.Catalog(ns.archive, ns.store).branches()
+        elif ns.action in ("checkout-branch", "checkout-node"):
+            catalog = refs.Catalog(ns.archive, ns.store)
+            node = catalog.select_branch(ns.branch) if ns.action == "checkout-branch" else catalog.select_node(ns.operation)
+            result = {"checked_out":refs.checkout(node, ns.worktree, ns.store, ns.state).operation}
         elif ns.action == "changes": result = lifecycle.changes(ns.state)
         elif ns.action in ("hide", "restore"): result = lifecycle.start(ns.state, ns.action)
         elif ns.action == "resume-visibility": result = lifecycle.finish(ns.state, ns.operation)

@@ -68,30 +68,27 @@ def locked(state):
     finally: con.close()
 
 
-def extract(archive, dest, managed=True):
+def extract(archive, dest, managed=True, *, source_sha=None, selected=None):
     dest = Path(dest).absolute()
     if dest.exists() or dest.is_symlink(): raise Rejected("checkout needs a fresh destination")
-    # A request that cannot complete does not leave a partially usable checkout.
+    # On failure a private incomplete stage may survive; do not remove or
+    # recursively clean an unknown name in a user-selected parent directory.
     stage = Path(tempfile.mkdtemp(prefix=".zip-checkout-", dir=dest.parent))
-    try:
-        marker, manifest = read_archive(archive, managed=managed, sink=stage)
-        rename_new(stage, dest)
-        sync_dir(dest.parent)
-        return marker, manifest
-    finally:
-        if stage.exists():
-            # Only private locally-created output, never the user's prior destination.
-            import shutil
-            shutil.rmtree(stage)
+    marker, manifest = read_archive(archive, managed=managed, sink=stage)
+    if source_sha is not None and digest_file(Path(archive)) != source_sha or selected is not None and marker != selected:
+        raise Rejected("exact selected archive changed; no worktree destination was published")
+    rename_new(stage, dest)
+    sync_dir(dest.parent)
+    return marker, manifest
 
 
-def checkout(archive, dest, store, state):
+def checkout(archive, dest, store, state, *, expected=None):
     dest, store, state = paths(dest, store, state)
     if state.exists(): raise Rejected("choose a new private state directory")
     before = digest_file(Path(archive))
-    marker, _ = extract(archive, dest)
-    if digest_file(Path(archive)) != before:
-        raise Rejected("selected source archive changed; the copy was not attached")
+    if expected is not None and expected.sha256 != before:
+        raise Rejected("selected directory node was replaced before checkout")
+    marker, _ = extract(archive, dest, source_sha=before, selected=expected.marker if expected is not None else None)
     enroll(dest, store, state, (marker, before))
     return marker
 
@@ -157,31 +154,9 @@ def status(state):
 
 def history(archive, store):
     """Follow original parent operations only. Missing history is not a synthetic root."""
-    first, _ = read_archive(archive)
-    index = {first.operation: first}
-    store = Path(store)
-    seen = 0
-    for item in store.iterdir():
-        seen += 1
-        if seen > 10_000: raise Rejected("history listing exceeds current catalog budget")
-        if not item.name.startswith(first.repo + ".") or item.suffix != ".zxs": continue
-        record, _ = read_archive(item)
-        if record.repo != first.repo or item.name != record.filename:
-            raise Rejected("managed slot conflicts with its own directory commit")
-        if record.operation in index and index[record.operation] != record:
-            raise Rejected("one operation resolves to distinct directory commits")
-        index[record.operation] = record
-    chain, used = [], set()
-    cursor = first
-    while True:
-        if cursor.operation in used: raise Rejected("directory history cycle")
-        used.add(cursor.operation); chain.append(cursor)
-        if cursor.parent is None: return chain, None
-        if cursor.parent not in index: return chain, cursor.parent
-        prev = index[cursor.parent]
-        if cursor.generation > 1 and (prev.branch != cursor.branch or prev.generation + 1 != cursor.generation):
-            raise Rejected("broken branch ancestry")
-        cursor = prev
+    from .refs import Catalog
+    catalog = Catalog(archive, store)
+    return catalog.history(catalog.anchor.marker.operation)
 
 
 def fork_pending(state, operation):
