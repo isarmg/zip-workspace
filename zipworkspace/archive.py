@@ -172,11 +172,21 @@ def read_archive(path, *, managed=True, sink: Path | None = None, internal=False
                                 raise Rejected("data exceeds declared size")
                             h.update(block)
                             if target: target.write(block)
+                        if target:
+                            target.flush()
+                            os.fsync(target.fileno())
                     finally:
                         if target: target.close()
                 if written != info.file_size:
                     raise Rejected("incomplete member")
                 if not directory: manifest.rows[name] = (False, written, h.hexdigest())
+            if sink is not None:
+                # Child data/name durability precedes publishing a visible checkout.
+                dirs = [sink/name for name,(directory,_,__) in manifest.rows.items() if directory]
+                for directory in sorted(dirs, key=lambda p:len(p.parts), reverse=True) + [sink]:
+                    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                    try: os.fsync(fd)
+                    finally: os.close(fd)
             if marker and manifest.digest() != marker.tree:
                 raise Rejected("repository marker disagrees with the complete directory")
         if before != stamp(f):

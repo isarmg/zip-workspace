@@ -22,7 +22,7 @@ def _dir_flags():
     return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
-def _scan(rootfd, frozen=None):
+def _scan(rootfd, frozen=None, *, hash_files=False):
     facts = {}
     manifest = Manifest()
     rootdev = os.fstat(rootfd).st_dev
@@ -51,15 +51,16 @@ def _scan(rootfd, frozen=None):
                     if is_dir:
                         if frozen is not None: (frozen / path).mkdir(mode=0o700)
                         visit(child, path)
-                    elif frozen is not None:
+                    elif frozen is not None or hash_files:
                         h = hashlib.sha256()
                         count = 0
-                        with (frozen / path).open("xb") as out:
+                        output = (frozen / path).open("xb") if frozen is not None else contextlib.nullcontext(None)
+                        with output as out:
                             while block := os.read(child, CHUNK):
                                 count += len(block)
                                 if count > before.st_size: raise Rejected("source grew while freezing")
                                 h.update(block)
-                                out.write(block)
+                                if out is not None: out.write(block)
                         if count != before.st_size: raise Rejected("source shrank while freezing")
                         manifest.rows[path] = (False, count, h.hexdigest())
                     if _sig(os.fstat(child)) != facts[path] or _sig(os.stat(name, dir_fd=fd, follow_symlinks=False)) != facts[path]:
@@ -70,6 +71,20 @@ def _scan(rootfd, frozen=None):
             raise Rejected("directory changed while freezing")
     visit(rootfd, "")
     return facts, manifest
+
+
+def observe_tree(source: Path):
+    """Read back actual named files without making a second private data copy."""
+    _native()
+    fd = os.open(source, _dir_flags())
+    try:
+        root_sig = _sig(os.fstat(fd))
+        facts, tree = _scan(fd, hash_files=True)
+        now, _ = _scan(fd)
+        if facts != now or root_sig != _sig(os.stat(source, follow_symlinks=False)):
+            raise Rejected("checkout changed during readback")
+        return tree
+    finally: os.close(fd)
 
 
 @contextlib.contextmanager

@@ -61,12 +61,13 @@ class DirectoryRefs(unittest.TestCase):
 
     def test_changed_original_during_private_extraction_never_exposes_wrong_destination(self):
         selected = refs.Catalog(self.oldfile, self.store).select_node(self.old.operation)
-        original = w.read_archive
+        from zipworkspace import opening
+        original = opening.read_archive
         def swap_after_read(archive, **args):
             result = original(archive, **args)
             self.oldfile.write_bytes(self.newfile.read_bytes())
             return result
-        with patch.object(w, "read_archive", side_effect=swap_after_read):
+        with patch.object(opening, "read_archive", side_effect=swap_after_read):
             with self.assertRaises(Rejected):
                 refs.checkout(selected, self.root/"no-destination", self.store, self.root/"no-state")
         self.assertFalse((self.root/"no-destination").exists())

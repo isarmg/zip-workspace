@@ -49,5 +49,5 @@ class LocalHeader(TestCase):
         work.mkdir(); store.mkdir()
         with mock.patch("zipworkspace.worktree.require_native_writer", side_effect=Rejected("unsupported provider")):
             with self.assertRaises(Rejected): w.enroll(work,store,state)
-            with self.assertRaises(Rejected): w.extract(self.path,self.root/"out",managed=False)
+            with self.assertRaises(Rejected): w.import_zip(self.path,self.root/"out")
         self.assertFalse(state.exists()); self.assertFalse((self.root/"out").exists())

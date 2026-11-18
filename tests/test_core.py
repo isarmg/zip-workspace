@@ -95,9 +95,9 @@ class Repo(unittest.TestCase):
         with self.assertRaises(Rejected): read_archive(copy)
         with self.assertRaises(Rejected): read_archive(plain)
         dest = self.root / "import"
-        w.extract(plain, dest, managed=False)
+        w.import_zip(plain, dest)
         self.assertEqual((dest / "hello").read_bytes(), b"ok")
-        with self.assertRaises(Rejected): w.extract(plain, dest, managed=False)
+        with self.assertRaises(Rejected): w.import_zip(plain, dest)
 
     def test_malformed_tree_is_never_exposed_at_destination(self):
         for i, names in enumerate((["../off"], ["a/file", "A/file2"], ["file", "file/dir"], ["CON.txt"])):
@@ -105,7 +105,7 @@ class Repo(unittest.TestCase):
             with zipfile.ZipFile(path, "w") as z:
                 for name in names: z.writestr(name, b"123")
             dest = self.root / "out"
-            with self.assertRaises(Rejected): w.extract(path, dest, managed=False)
+            with self.assertRaises(Rejected): w.import_zip(path, dest)
             self.assertFalse(dest.exists())
         self.assertFalse((self.root / "off").exists())
 

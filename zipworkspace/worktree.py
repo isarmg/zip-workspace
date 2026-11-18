@@ -28,7 +28,15 @@ def enroll(work, store, state, base=None):
     work, store, state = paths(work, store, state)
     if not work.is_dir() or work.is_symlink(): raise Rejected("select a regular local working directory")
     state.mkdir(mode=0o700, exist_ok=False)
-    con = sqlite3.connect(state / "worktree.sqlite")
+    create_catalog(work, store, state, base, new_id())
+    sync_dir(state.parent)
+
+
+def create_catalog(work, store, state, base, instance_id):
+    fd, tmp = tempfile.mkstemp(prefix=".catalog-", dir=state)
+    os.close(fd)
+    temp = Path(tmp)
+    con = sqlite3.connect(temp)
     try:
         con.execute("PRAGMA synchronous=FULL")
         con.execute("""CREATE TABLE checkout(singleton INTEGER PRIMARY KEY CHECK(singleton=1),
@@ -40,12 +48,14 @@ def enroll(work, store, state, base=None):
         con.execute("CREATE TABLE forked_original(operation TEXT PRIMARY KEY, successor TEXT NOT NULL)")
         root, source_sha = base if base else (None, None)
         con.execute("INSERT INTO checkout VALUES(1,?,?,?,?,?,?,?,?,NULL,NULL)", (
-            new_id(), str(work), str(store), root.repo if root else new_id(),
+            instance_id, str(work), str(store), root.repo if root else new_id(),
             root.branch if root else new_id(), root.generation if root else 0,
             root.operation if root else None, source_sha))
         con.commit()
     finally: con.close()
-    sync_dir(state); sync_dir(state.parent)
+    with temp.open("rb") as f: os.fsync(f.fileno())
+    rename_new(temp, state / "worktree.sqlite")
+    sync_dir(state)
 
 
 @contextmanager
@@ -69,29 +79,23 @@ def locked(state):
     finally: con.close()
 
 
-def extract(archive, dest, managed=True, *, source_sha=None, selected=None):
+def import_zip(archive, dest):
     require_native_writer()
     dest = Path(dest).absolute()
     if dest.exists() or dest.is_symlink(): raise Rejected("checkout needs a fresh destination")
     # On failure a private incomplete stage may survive; do not remove or
     # recursively clean an unknown name in a user-selected parent directory.
     stage = Path(tempfile.mkdtemp(prefix=".zip-checkout-", dir=dest.parent))
-    marker, manifest = read_archive(archive, managed=managed, sink=stage)
-    if source_sha is not None and digest_file(Path(archive)) != source_sha or selected is not None and marker != selected:
-        raise Rejected("exact selected archive changed; no worktree destination was published")
+    _, manifest = read_archive(archive, managed=False, sink=stage)
     rename_new(stage, dest)
     sync_dir(dest.parent)
-    return marker, manifest
+    return manifest
 
 
 def checkout(archive, dest, store, state, *, expected=None):
+    from . import opening
     dest, store, state = paths(dest, store, state)
-    if state.exists(): raise Rejected("choose a new private state directory")
-    before = digest_file(Path(archive))
-    if expected is not None and expected.sha256 != before:
-        raise Rejected("selected directory node was replaced before checkout")
-    marker, _ = extract(archive, dest, source_sha=before, selected=expected.marker if expected is not None else None)
-    enroll(dest, store, state, (marker, before))
+    _, marker = opening.begin(archive, dest.parent, dest.name, store, state, automatic=False, expected=expected)
     return marker
 
 

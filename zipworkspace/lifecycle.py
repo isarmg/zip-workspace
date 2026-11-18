@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import stat
 from .archive import read_archive
-from .freeze import frozen_tree
+from .freeze import observe_tree
 from .model import Rejected, check_id, new_id
 from .publish import digest_file, rename_new, sync_dir
 
@@ -57,9 +57,8 @@ def base_tree(row):
 
 
 def clean_at(path, state, tree_id):
-    with frozen_tree(path, state) as (_, tree):
-        if tree.digest() != tree_id:
-            raise Rejected("worktree is dirty; its existing directory and contents were preserved")
+    if observe_tree(path).digest() != tree_id:
+        raise Rejected("worktree is dirty; its existing directory and contents were preserved")
 
 
 def changes(state):
@@ -67,13 +66,12 @@ def changes(state):
     with locked(state) as (con, row, state):
         require_visible(con, row)
         base = base_tree(row).rows if row["generation"] else {}
-        with frozen_tree(locations(row)[0], state) as (_, tree):
-            cur = tree.rows
-            def report(keys):
-                keys = sorted(keys)
-                return {"count": len(keys), "first_paths": keys[:100]}
-            return {"added":report(cur.keys() - base.keys()), "removed":report(base.keys() - cur.keys()),
-                    "changed":report(k for k in cur.keys() & base.keys() if cur[k] != base[k])}
+        cur = observe_tree(locations(row)[0]).rows
+        def report(keys):
+            keys = sorted(keys)
+            return {"count": len(keys), "first_paths": keys[:100]}
+        return {"added":report(cur.keys() - base.keys()), "removed":report(base.keys() - cur.keys()),
+                "changed":report(k for k in cur.keys() & base.keys() if cur[k] != base[k])}
 
 
 def start(state, action):

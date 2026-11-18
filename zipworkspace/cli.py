@@ -9,7 +9,7 @@ import zipfile
 from .archive import read_archive
 from .model import Rejected
 from . import worktree as w
-from . import lifecycle, refs
+from . import lifecycle, refs, opening
 
 
 def main(args=None):
@@ -24,6 +24,10 @@ def main(args=None):
     add("checkout", "archive worktree store state", "check out the selected directory snapshot, never a guessed head")
     add("import-zip", "archive worktree", "import an ordinary unencrypted Store .zip into a new directory")
     add("status", "state", "show this checkout's recorded base and pending original")
+    auto=add("checkout-auto","archive parent store state","allocate a collision-safe fresh local checkout name")
+    auto.add_argument("name")
+    add("checkout-status","state","inspect the original checkout identity, destination and phase")
+    add("resume-checkout","state","resume only the exact original checkout").add_argument("operation")
     add("history", "archive store", "follow exact directory-level commit ancestry")
     add("branches", "archive store", "list complete observed directory heads and exact missing ancestors")
     for command, field in (("checkout-branch","branch"), ("checkout-node","operation")):
@@ -48,7 +52,14 @@ def main(args=None):
         elif ns.action == "checkout":
             marker = w.checkout(ns.archive, ns.worktree, ns.store, ns.state); result = {"checked_out": marker.operation}
         elif ns.action == "import-zip":
-            _, tree = w.extract(ns.archive, ns.worktree, managed=False); result = {"imported_entries": len(tree.rows)}
+            tree = w.import_zip(ns.archive, ns.worktree); result = {"imported_entries": len(tree.rows)}
+        elif ns.action == "checkout-auto":
+            path, marker = opening.begin(ns.archive,ns.parent,ns.name,ns.store,ns.state,automatic=True)
+            result = {"checked_out":marker.operation,"worktree":str(path),"original":opening.status(ns.state)}
+        elif ns.action == "checkout-status": result = opening.status(ns.state)
+        elif ns.action == "resume-checkout":
+            path, marker = opening.finish(ns.state,ns.operation)
+            result = {"original_checked_out_node":marker.operation,"original_destination":str(path)}
         elif ns.action == "status": result = w.status(ns.state)
         elif ns.action == "branches":
             result = refs.Catalog(ns.archive, ns.store).branches()
